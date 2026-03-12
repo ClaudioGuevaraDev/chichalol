@@ -689,7 +689,7 @@ function ChipChampion({
   );
 }
 
-function ChampionStrip({
+export function ChampionStrip({
   title,
   champions,
   compact = false

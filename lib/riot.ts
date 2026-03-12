@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { readEnv } from "@/lib/env";
 import { createMockProfileSnapshot } from "@/lib/mock-data";
+import { markExternalServiceCooldown } from "@/lib/service-status";
 import {
   ChampionMasteryEntry,
   MatchPerformance,
@@ -23,6 +24,26 @@ const platformRouting: Record<SupportedRegion, string> = {
 };
 const matchPageSize = 100;
 const matchDetailBatchSize = 10;
+const rankedQueues = [420, 440] as const;
+const PROFILE_CACHE_TTL_MS = 5 * 60_000;
+const PROFILE_STALE_FALLBACK_MS = 20 * 60_000;
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __chichalolProfileSnapshotCache:
+    | Map<
+        string,
+        {
+          snapshot: RiotProfileSnapshot;
+          source: "live";
+          warnings: string[];
+          fetchedAt: number;
+        }
+      >
+    | undefined;
+  // eslint-disable-next-line no-var
+  var __chichalolChampionDictionaryPromise: Promise<Record<number, string>> | undefined;
+}
 
 const accountSchema = z.object({
   puuid: z.string(),
@@ -145,6 +166,11 @@ async function riotFetch<T>(url: string, schema: z.ZodType<T>): Promise<T> {
 
     if (response.status === 429 && attempt < 3) {
       const retryAfter = Number(response.headers.get("retry-after") ?? "1");
+      markExternalServiceCooldown(
+        "riot",
+        Math.max(1, retryAfter),
+        "Riot API no está disponible actualmente por límite de uso."
+      );
       await new Promise((resolve) => setTimeout(resolve, Math.max(1, retryAfter) * 1000));
       continue;
     }
@@ -161,23 +187,100 @@ async function riotFetch<T>(url: string, schema: z.ZodType<T>): Promise<T> {
 }
 
 async function loadChampionDictionary(): Promise<Record<number, string>> {
-  const response = await fetch(
-    "https://ddragon.leagueoflegends.com/cdn/14.24.1/data/en_US/champion.json",
-    { cache: "force-cache" }
-  );
+  if (!globalThis.__chichalolChampionDictionaryPromise) {
+    globalThis.__chichalolChampionDictionaryPromise = fetch(
+      "https://ddragon.leagueoflegends.com/cdn/14.24.1/data/en_US/champion.json",
+      { cache: "force-cache" }
+    )
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error("Unable to load champion dictionary");
+        }
 
-  if (!response.ok) {
-    throw new Error("Unable to load champion dictionary");
+        const json = (await response.json()) as {
+          data: Record<string, { key: string; id: string }>;
+        };
+
+        return Object.values(json.data).reduce<Record<number, string>>((acc, champion) => {
+          acc[Number(champion.key)] = champion.id;
+          return acc;
+        }, {});
+      })
+      .catch((error) => {
+        globalThis.__chichalolChampionDictionaryPromise = undefined;
+        throw error;
+      });
   }
 
-  const json = (await response.json()) as {
-    data: Record<string, { key: string; id: string }>;
-  };
+  return globalThis.__chichalolChampionDictionaryPromise;
+}
 
-  return Object.values(json.data).reduce<Record<number, string>>((acc, champion) => {
-    acc[Number(champion.key)] = champion.id;
-    return acc;
-  }, {});
+function getProfileCache() {
+  if (!globalThis.__chichalolProfileSnapshotCache) {
+    globalThis.__chichalolProfileSnapshotCache = new Map();
+  }
+
+  return globalThis.__chichalolProfileSnapshotCache;
+}
+
+function readFreshProfileCache(cacheKey: string) {
+  const entry = getProfileCache().get(cacheKey);
+
+  if (!entry) {
+    return null;
+  }
+
+  if (Date.now() - entry.fetchedAt <= PROFILE_CACHE_TTL_MS) {
+    return entry;
+  }
+
+  return null;
+}
+
+function readStaleProfileCache(cacheKey: string) {
+  const entry = getProfileCache().get(cacheKey);
+
+  if (!entry) {
+    return null;
+  }
+
+  if (Date.now() - entry.fetchedAt <= PROFILE_STALE_FALLBACK_MS) {
+    return entry;
+  }
+
+  return null;
+}
+
+function writeProfileCache(
+  cacheKey: string,
+  entry: { snapshot: RiotProfileSnapshot; source: "live"; warnings: string[]; fetchedAt: number }
+) {
+  getProfileCache().set(cacheKey, entry);
+}
+
+async function fetchRankedQueueMatchIds(
+  routing: string,
+  puuid: string,
+  queueId: (typeof rankedQueues)[number],
+  startTime: number,
+  endTime: number
+) {
+  const matchIds: string[] = [];
+
+  for (let start = 0; ; start += matchPageSize) {
+    const page = await riotFetch(
+      `https://${routing}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?queue=${queueId}&start=${start}&count=${matchPageSize}&startTime=${startTime}&endTime=${endTime}`,
+      z.array(z.string())
+    );
+
+    matchIds.push(...page);
+
+    if (page.length < matchPageSize) {
+      break;
+    }
+  }
+
+  return matchIds;
 }
 
 async function fetchRankedSnapshot(region: SupportedRegion, puuid: string): Promise<{
@@ -246,20 +349,12 @@ async function fetchMatches(
   const seasonStart = new Date(Date.UTC(seasonYear, 0, 1, 0, 0, 0));
   const startTime = Math.floor(seasonStart.getTime() / 1000);
   const endTime = Math.floor(Date.now() / 1000);
-  const matchIds: string[] = [];
-
-  for (let start = 0; ; start += matchPageSize) {
-    const page = await riotFetch(
-      `https://${routing}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?start=${start}&count=${matchPageSize}&startTime=${startTime}&endTime=${endTime}`,
-      z.array(z.string())
-    );
-
-    matchIds.push(...page);
-
-    if (page.length < matchPageSize) {
-      break;
-    }
-  }
+  const rankedMatchIdSets = await Promise.all(
+    rankedQueues.map((queueId) =>
+      fetchRankedQueueMatchIds(routing, puuid, queueId, startTime, endTime)
+    )
+  );
+  const matchIds = Array.from(new Set(rankedMatchIdSets.flat()));
 
   const hydratedMatches: Array<z.infer<typeof matchSchema> | null> = [];
 
@@ -334,6 +429,16 @@ export async function loadRiotProfileSnapshot(params: {
 }> {
   const { gameName, tagLine, region } = params;
   const riotId = `${gameName}#${tagLine}`;
+  const cacheKey = `${gameName.toLowerCase()}#${tagLine.toLowerCase()}#${region}`;
+  const freshCache = readFreshProfileCache(cacheKey);
+
+  if (freshCache) {
+    return {
+      snapshot: freshCache.snapshot,
+      source: freshCache.source,
+      warnings: freshCache.warnings
+    };
+  }
 
   try {
     const account = await riotFetch(
@@ -354,7 +459,11 @@ export async function loadRiotProfileSnapshot(params: {
           ]
         : [];
 
-    return {
+    const result: {
+      snapshot: RiotProfileSnapshot;
+      source: "live";
+      warnings: string[];
+    } = {
       snapshot: {
         riotId,
         region,
@@ -369,9 +478,29 @@ export async function loadRiotProfileSnapshot(params: {
       source: "live",
       warnings
     };
+
+    writeProfileCache(cacheKey, {
+      ...result,
+      source: "live",
+      fetchedAt: Date.now()
+    });
+
+    return result;
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Unknown Riot API failure";
+    const staleCache = readStaleProfileCache(cacheKey);
+
+    if (staleCache) {
+      return {
+        snapshot: staleCache.snapshot,
+        source: "live",
+        warnings: [
+          "Se mostró una copia reciente del perfil mientras Riot estaba limitado.",
+          message
+        ]
+      };
+    }
 
     return {
       snapshot: createMockProfileSnapshot(riotId, region),

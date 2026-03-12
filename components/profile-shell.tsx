@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import { ProfileForm } from "@/components/profile-form";
 import { ProfileResults } from "@/components/profile-results";
+import { TeamSynergy } from "@/components/team-synergy";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -12,11 +13,13 @@ import { cn } from "@/lib/utils";
 import { AnalysisResponse } from "@/lib/types";
 
 type ViewMode = "stats" | "ai";
+type ProductMode = "profile" | "team";
 
 export function ProfileShell() {
   const [result, setResult] = useState<AnalysisResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("stats");
+  const [productMode, setProductMode] = useState<ProductMode>("profile");
   const currentSeasonYear = new Date().getFullYear();
 
   return (
@@ -86,8 +89,8 @@ export function ProfileShell() {
               </div>
               <div className="grid grid-cols-2 gap-3">
               {[
-                { id: "stats", label: "Estadístico" },
-                { id: "ai", label: "Análisis IA" }
+                { id: "profile", label: "Perfil" },
+                { id: "team", label: "Sinergia" }
               ].map((mode) => (
                 <Button
                   key={mode.id}
@@ -95,11 +98,11 @@ export function ProfileShell() {
                   variant="ghost"
                   className={cn(
                     "h-13 rounded-[1rem] border text-base font-semibold",
-                    viewMode === mode.id
+                    productMode === mode.id
                       ? "border-sky-300/45 bg-primary text-primary-foreground shadow-glow hover:bg-primary/90"
                       : "border-white/8 bg-panel/70 text-slate-300 hover:bg-secondary/80 hover:text-white"
                   )}
-                  onClick={() => setViewMode(mode.id as ViewMode)}
+                  onClick={() => setProductMode(mode.id as ProductMode)}
                 >
                   {mode.label}
                 </Button>
@@ -107,7 +110,52 @@ export function ProfileShell() {
               </div>
             </div>
           </div>
-          <ProfileResults result={result} mode={viewMode} />
+          {productMode === "profile" ? (
+            <>
+              <div className="rounded-[1.75rem] border border-white/10 bg-card/75 p-5 shadow-[0_20px_55px_rgba(2,8,23,0.3)]">
+                <div className="grid gap-4">
+                  <div>
+                    <div className="flex items-center gap-3">
+                      <Sparkles className="h-5 w-5 text-cyan-300" />
+                      <p className="text-2xl font-semibold tracking-tight text-white">Vista</p>
+                    </div>
+                    <p className="mt-3 text-base leading-7 text-slate-300">
+                      Elige entre la lectura estadística o la lectura guiada por IA del modo Perfil.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    {[
+                      { id: "stats", label: "Estadístico" },
+                      { id: "ai", label: "Análisis IA" }
+                    ].map((mode) => (
+                      <Button
+                        key={mode.id}
+                        type="button"
+                        variant="ghost"
+                        className={cn(
+                          "h-13 rounded-[1rem] border text-base font-semibold",
+                          viewMode === mode.id
+                            ? "border-sky-300/45 bg-primary text-primary-foreground shadow-glow hover:bg-primary/90"
+                            : "border-white/8 bg-panel/70 text-slate-300 hover:bg-secondary/80 hover:text-white"
+                        )}
+                        onClick={() => setViewMode(mode.id as ViewMode)}
+                      >
+                        {mode.label}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <ProfileResults result={result} mode={viewMode} />
+            </>
+          ) : (
+            <TeamSynergy
+              primaryPlayer={{
+                riotId: result.player.riotId,
+                region: result.player.region
+              }}
+            />
+          )}
         </div>
       )}
     </div>

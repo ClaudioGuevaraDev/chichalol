@@ -304,3 +304,104 @@ export interface AnalysisResponse {
   };
   features: PlayerFeatureVector;
 }
+
+export interface TeamMemberInput {
+  gameName: string;
+  tagLine: string;
+  region: SupportedRegion;
+}
+
+export interface TeamMemberSummary {
+  riotId: string;
+  region: SupportedRegion;
+  primaryRole: RoleName;
+  secondaryRole?: RoleName;
+  topChampions: string[];
+  styleTags: PlayerStyleTag[];
+  ranked: {
+    solo?: RankedSnapshot;
+    flex?: RankedSnapshot;
+  };
+}
+
+export interface TeamRoleAssignment {
+  role: RoleName;
+  player?: string;
+  confidence: "alta" | "media" | "baja";
+  reason: string;
+  backupPlayer?: string;
+  champions: string[];
+}
+
+export interface TeamPlayerOpinion {
+  player: string;
+  bestRole: RoleName;
+  secondaryRole?: RoleName;
+  contribution: string;
+  risk: string;
+  champions: string[];
+}
+
+export interface TeamSynergyHighlight {
+  title: string;
+  description: string;
+  players: string[];
+  champions: string[];
+}
+
+export interface TeamConflict {
+  severity: "alta" | "media" | "baja";
+  title: string;
+  description: string;
+}
+
+export interface TeamChampionPlan {
+  player: string;
+  role?: RoleName;
+  spamNow: string[];
+  safe: string[];
+  avoid: string[];
+}
+
+export interface TeamCompositionSuggestion {
+  identity: string;
+  summary: string;
+  playPattern: string;
+  assignments: TeamRoleAssignment[];
+  championsByPlayer: Array<{
+    player: string;
+    role?: RoleName;
+    champions: string[];
+  }>;
+}
+
+export interface TeamAnalysisResponse {
+  members: TeamMemberSummary[];
+  recommendedAssignments: TeamRoleAssignment[];
+  teamSummary: {
+    compatibilityScore: number;
+    headline: string;
+    summary: string;
+    strengths: string[];
+    risks: string[];
+  };
+  compositionSuggestion: TeamCompositionSuggestion;
+  playerOpinions: TeamPlayerOpinion[];
+  strongSynergies: TeamSynergyHighlight[];
+  conflicts: TeamConflict[];
+  championPlans: TeamChampionPlan[];
+  fallbackPlan: {
+    summary: string;
+    assignments: TeamRoleAssignment[];
+  };
+  teamIdentity: {
+    headline: string;
+    summary: string;
+  };
+  teamRules: string[];
+  sourceStatus: {
+    riot: "live" | "mock";
+    ai: "live" | "fallback";
+    warnings: string[];
+  };
+}

@@ -4,7 +4,7 @@ import { z } from "zod";
 import { analyzeProfile } from "@/lib/analysis";
 import { enrichWithAI } from "@/lib/ai";
 import { loadRiotProfileSnapshot } from "@/lib/riot";
-import { getExternalServiceStatuses } from "@/lib/service-status";
+import { getKnownExternalServiceStatuses } from "@/lib/service-status";
 
 const requestSchema = z.object({
   gameName: z.string().min(2).max(32),
@@ -15,7 +15,7 @@ const requestSchema = z.object({
 export async function POST(request: Request) {
   try {
     const payload = requestSchema.parse(await request.json());
-    const statuses = await getExternalServiceStatuses(true);
+    const statuses = getKnownExternalServiceStatuses();
     const riotStatus = statuses.find((status) => status.service === "riot");
 
     if (riotStatus && !riotStatus.available) {

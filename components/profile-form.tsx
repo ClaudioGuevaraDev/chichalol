@@ -1,13 +1,13 @@
 "use client";
 
 import { LoaderCircle, Search } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
-import { AnalysisResponse, ExternalServiceStatus, SupportedRegion } from "@/lib/types";
+import { AnalysisResponse, SupportedRegion } from "@/lib/types";
 
 const initialForm = {
   gameName: "",
@@ -24,41 +24,6 @@ export function ProfileForm({
 }) {
   const [form, setForm] = useState(initialForm);
   const [isLoading, setIsLoading] = useState(false);
-  const [serviceStatuses, setServiceStatuses] = useState<ExternalServiceStatus[]>([]);
-
-  useEffect(() => {
-    void loadServiceStatuses(false);
-  }, []);
-
-  async function loadServiceStatuses(force: boolean) {
-    try {
-      const response = await fetch(`/api/service-status${force ? "?force=1" : ""}`, {
-        cache: "no-store"
-      });
-      const data = (await response.json()) as { statuses?: ExternalServiceStatus[] };
-      setServiceStatuses(data.statuses ?? []);
-      return data.statuses ?? [];
-    } catch {
-      const fallback: ExternalServiceStatus[] = [
-        {
-          service: "riot",
-          available: false,
-          message: "No fue posible validar Riot API.",
-          retryAfterSeconds: 60,
-          checkedAt: Date.now()
-        },
-        {
-          service: "gemini",
-          available: false,
-          message: "No fue posible validar Gemini API.",
-          retryAfterSeconds: 60,
-          checkedAt: Date.now()
-        }
-      ];
-      setServiceStatuses(fallback);
-      return fallback;
-    }
-  }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -66,13 +31,6 @@ export function ProfileForm({
     onError(null);
 
     try {
-      const statuses = await loadServiceStatuses(true);
-      const riotStatus = statuses.find((status) => status.service === "riot");
-
-      if (riotStatus && !riotStatus.available) {
-        throw new Error(formatServiceAlert(riotStatus));
-      }
-
       const response = await fetch("/api/analyze-profile", {
         method: "POST",
         headers: {
@@ -94,9 +52,6 @@ export function ProfileForm({
       setIsLoading(false);
     }
   }
-
-  const unavailableStatuses = serviceStatuses.filter((status) => !status.available);
-  const riotUnavailable = unavailableStatuses.some((status) => status.service === "riot");
 
   return (
     <form className="grid gap-4" onSubmit={handleSubmit}>
@@ -142,7 +97,7 @@ export function ProfileForm({
               <option value="LAN">LAN</option>
             </Select>
           </div>
-          <Button className="w-full md:mt-7" size="lg" disabled={isLoading || riotUnavailable} type="submit">
+          <Button className="w-full md:mt-7" size="lg" disabled={isLoading} type="submit">
             {isLoading ? (
               <>
                 <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
@@ -160,37 +115,6 @@ export function ProfileForm({
       <p className="px-1 text-sm text-muted-foreground">
         Ingresa tu Riot ID y región. El análisis traerá la temporada actual y aparecerá debajo en el mismo flujo.
       </p>
-      {unavailableStatuses.length > 0 ? (
-        <div className="grid gap-3">
-          {unavailableStatuses.map((status) => (
-            <div
-              key={status.service}
-              className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-100"
-            >
-              {formatServiceAlert(status)}
-            </div>
-          ))}
-        </div>
-      ) : null}
     </form>
   );
-}
-
-function formatServiceAlert(status: ExternalServiceStatus) {
-  const serviceLabel = status.service === "riot" ? "Riot" : "Gemini";
-  const retryText =
-    status.retryAfterSeconds && status.retryAfterSeconds > 0
-      ? ` Estará activo nuevamente en ${formatRetryAfter(status.retryAfterSeconds)}.`
-      : "";
-
-  return `${serviceLabel} no está disponible actualmente. ${status.message}${retryText}`;
-}
-
-function formatRetryAfter(seconds: number) {
-  if (seconds < 60) {
-    return `${seconds}s`;
-  }
-
-  const minutes = Math.ceil(seconds / 60);
-  return `${minutes} min`;
 }

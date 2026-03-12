@@ -6,9 +6,21 @@ declare global {
   var __chichalolServiceStatusCache:
     | { value: ExternalServiceStatus[]; expiresAt: number }
     | undefined;
+  // eslint-disable-next-line no-var
+  var __chichalolServiceCooldowns:
+    | Partial<Record<ExternalServiceName, { retryUntil: number; message: string }>>
+    | undefined;
 }
 
 const CACHE_TTL_MS = 30_000;
+
+function getCooldownStore() {
+  if (!globalThis.__chichalolServiceCooldowns) {
+    globalThis.__chichalolServiceCooldowns = {};
+  }
+
+  return globalThis.__chichalolServiceCooldowns;
+}
 
 function buildStatus(
   service: ExternalServiceName,
@@ -25,7 +37,60 @@ function buildStatus(
   };
 }
 
+function readCooldownStatus(service: ExternalServiceName): ExternalServiceStatus | null {
+  const cooldown = getCooldownStore()[service];
+
+  if (!cooldown) {
+    return null;
+  }
+
+  const retryAfterSeconds = Math.ceil((cooldown.retryUntil - Date.now()) / 1000);
+
+  if (retryAfterSeconds <= 0) {
+    delete getCooldownStore()[service];
+    return null;
+  }
+
+  return buildStatus(service, false, cooldown.message, retryAfterSeconds);
+}
+
+export function markExternalServiceCooldown(
+  service: ExternalServiceName,
+  retryAfterSeconds: number,
+  message: string
+) {
+  getCooldownStore()[service] = {
+    retryUntil: Date.now() + Math.max(1, retryAfterSeconds) * 1000,
+    message
+  };
+
+  const cached = globalThis.__chichalolServiceStatusCache;
+
+  if (cached) {
+    globalThis.__chichalolServiceStatusCache = {
+      value: cached.value.map((status) =>
+        status.service === service
+          ? buildStatus(service, false, message, Math.max(1, retryAfterSeconds))
+          : status
+      ),
+      expiresAt: Date.now() + CACHE_TTL_MS
+    };
+  }
+}
+
+export function getKnownExternalServiceStatuses(): ExternalServiceStatus[] {
+  return (["riot", "gemini"] as const)
+    .map((service) => readCooldownStatus(service))
+    .filter((status): status is ExternalServiceStatus => Boolean(status));
+}
+
 async function validateRiotService(): Promise<ExternalServiceStatus> {
+  const cooldownStatus = readCooldownStatus("riot");
+
+  if (cooldownStatus) {
+    return cooldownStatus;
+  }
+
   const apiKey = readEnv("RIOT_API_KEY");
 
   if (!apiKey) {
@@ -48,6 +113,11 @@ async function validateRiotService(): Promise<ExternalServiceStatus> {
 
   if (response.status === 429) {
     const retryAfter = Number(response.headers.get("retry-after") ?? "60");
+    markExternalServiceCooldown(
+      "riot",
+      Math.max(1, retryAfter),
+      "Riot API no está disponible actualmente por límite de uso."
+    );
     return buildStatus(
       "riot",
       false,
@@ -68,6 +138,12 @@ async function validateRiotService(): Promise<ExternalServiceStatus> {
 }
 
 async function validateGeminiService(): Promise<ExternalServiceStatus> {
+  const cooldownStatus = readCooldownStatus("gemini");
+
+  if (cooldownStatus) {
+    return cooldownStatus;
+  }
+
   const apiKey = readEnv("GEMINI_API_KEY");
   const model = readEnv("GEMINI_MODEL") ?? "gemini-2.5-flash";
 
@@ -88,6 +164,11 @@ async function validateGeminiService(): Promise<ExternalServiceStatus> {
 
   if (response.status === 429) {
     const retryAfter = Number(response.headers.get("retry-after") ?? "60");
+    markExternalServiceCooldown(
+      "gemini",
+      Math.max(1, retryAfter),
+      "Gemini API no está disponible actualmente por límite de uso."
+    );
     return buildStatus(
       "gemini",
       false,
