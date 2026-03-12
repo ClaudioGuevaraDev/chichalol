@@ -1,0 +1,150 @@
+import { readEnv } from "@/lib/env";
+import { AnalysisResponse } from "@/lib/types";
+
+export interface AIRecommendationProvider {
+  generateSummary(input: AnalysisResponse): Promise<AnalysisResponse>;
+}
+
+class GeminiRecommendationProvider implements AIRecommendationProvider {
+  async generateSummary(input: AnalysisResponse): Promise<AnalysisResponse> {
+    const apiKey = readEnv("GEMINI_API_KEY");
+    const model = readEnv("GEMINI_MODEL") ?? "gemini-2.5-flash";
+
+    if (!apiKey) {
+      throw new Error("Missing GEMINI_API_KEY");
+    }
+
+    const prompt = `
+Eres un analista de League of Legends orientado a scouting y coaching. Usa las nuevas señales del payload, especialmente:
+- rolePerformances
+- championPerformances
+- recentMatches
+- trend
+- consistency
+- winLossComparison
+
+No repitas estadísticas crudas si no aportan una conclusión. Prioriza lectura de perfil, fortalezas, debilidades, mejoras, rol recomendado y picks concretos.
+
+Devuelve JSON con shape:
+{
+  "summary": [{"title": string, "content": string}],
+  "aiProfile": {
+    "identity": {
+      "headline": string,
+      "summary": string,
+      "tags": string[]
+    },
+    "overview": string,
+    "strengths": string[],
+    "weaknesses": string[],
+    "fixNext": string[],
+    "keepDoing": string[],
+    "primaryRole": {
+      "role": string,
+      "confidenceLabel": "fuerte | media | explorable",
+      "why": string,
+      "evidence": string[],
+      "champions": string[],
+      "playstyleFit": string
+    },
+    "roleOpinions": [{
+      "role": string,
+      "verdict": "natural | viable | secundario | forzado | debil",
+      "summary": string,
+      "champions": string[]
+    }],
+    "championPlan": {
+      "spamNow": string[],
+      "learnNext": string[],
+      "comfortKeep": string[],
+      "avoidForNow": string[]
+    },
+    "winsVsLosses": string[],
+    "trendRead": {
+      "historicalIdentity": string,
+      "currentDirection": string,
+      "risk": string
+    }
+  },
+  "roleRecommendation": {"role": string, "score": number, "reasons": string[]},
+  "championRecommendations": [{"championName": string, "role": string, "score": number, "reasons": string[]}],
+  "evidence": string[]
+}
+
+Input:
+${JSON.stringify(input, null, 2)}
+`;
+
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [{ text: prompt }]
+            }
+          ],
+          generationConfig: {
+            responseMimeType: "application/json"
+          }
+        }),
+        cache: "no-store"
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Gemini API error ${response.status}`);
+    }
+
+    const json = (await response.json()) as {
+      candidates?: Array<{
+        content?: {
+          parts?: Array<{ text?: string }>;
+        };
+      }>;
+    };
+
+    const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    if (!text) {
+      throw new Error("Gemini returned an empty response");
+    }
+
+    const parsed = JSON.parse(text) as Partial<AnalysisResponse>;
+
+    return {
+      ...input,
+      summary: parsed.summary ?? input.summary,
+      aiProfile: parsed.aiProfile ?? input.aiProfile,
+      roleRecommendation: parsed.roleRecommendation ?? input.roleRecommendation,
+      championRecommendations:
+        parsed.championRecommendations ?? input.championRecommendations,
+      evidence: parsed.evidence ?? input.evidence,
+      sourceStatus: {
+        ...input.sourceStatus,
+        ai: "live"
+      }
+    };
+  }
+}
+
+export async function enrichWithAI(
+  response: AnalysisResponse
+): Promise<AnalysisResponse> {
+  try {
+    const provider = new GeminiRecommendationProvider();
+    return await provider.generateSummary(response);
+  } catch {
+    return {
+      ...response,
+      sourceStatus: {
+        ...response.sourceStatus,
+        ai: "fallback"
+      }
+    };
+  }
+}

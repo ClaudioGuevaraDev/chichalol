@@ -1,0 +1,64 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 219 46% 8%;
+  --foreground: 210 40% 96%;
+  --card: 221 43% 11%;
+  --card-foreground: 210 40% 96%;
+  --popover: 222 45% 10%;
+  --popover-foreground: 210 40% 96%;
+  --primary: 212 78% 58%;
+  --primary-foreground: 210 40% 98%;
+  --secondary: 219 31% 18%;
+  --secondary-foreground: 210 40% 96%;
+  --muted: 220 24% 16%;
+  --muted-foreground: 214 24% 78%;
+  --accent: 206 89% 59%;
+  --accent-foreground: 210 40% 98%;
+  --destructive: 0 74% 55%;
+  --destructive-foreground: 210 40% 96%;
+  --border: 217 33% 23%;
+  --input: 217 33% 19%;
+  --ring: 212 78% 58%;
+  --panel: 221 38% 13%;
+  --panel-foreground: 210 40% 96%;
+  --radius: 1rem;
+}
+
+* {
+  @apply border-border;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-background text-foreground antialiased;
+  background-image:
+    radial-gradient(circle at top left, rgba(51, 102, 204, 0.18), transparent 22%),
+    radial-gradient(circle at top right, rgba(15, 23, 42, 0.7), transparent 26%),
+    linear-gradient(180deg, rgba(5, 10, 24, 0.96), rgba(8, 15, 31, 1));
+  font-family: Aptos, "Segoe UI Variable Display", "Trebuchet MS", sans-serif;
+  letter-spacing: -0.01em;
+  min-height: 100vh;
+}
+
+a {
+  @apply text-inherit no-underline;
+}
+
+::selection {
+  background: rgba(56, 139, 253, 0.35);
+  color: white;
+}
+
+.text-soft {
+  color: hsl(var(--muted-foreground));
+}
+
+.text-strong {
+  color: hsl(var(--foreground));
+}
